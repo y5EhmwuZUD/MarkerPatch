@@ -203,10 +203,8 @@ static float CalculateFpsConstant(int target_fps)
 // Helper function for angle packing
 static inline unsigned __int64 PackAngles(float vertical, float horizontal)
 {
-	unsigned __int64 packed = 0;
-	reinterpret_cast<float&>(packed) = vertical;
-	reinterpret_cast<float*>(&packed)[1] = horizontal;
-	return packed;
+	float angles[2] = { vertical, horizontal };
+	return std::bit_cast<std::uint64_t>(angles);
 }
 
 // Helper function for input scaling

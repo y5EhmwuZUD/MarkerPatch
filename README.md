@@ -14,6 +14,10 @@ A patch that fixes various issues and limitations in the PC port of Dead Space 2
 > **Download**: [MarkerPatch.zip](https://github.com/Wemino/MarkerPatch/releases/latest/download/MarkerPatch.zip)  
 > Extract the contents of the zip file into the game's folder, in the same directory as the `deadspace2.exe` file.
 
+> [!WARNING]
+If the game doesn’t start on Windows after installing the patch, try updating the latest Microsoft Visual C++ Redistributable (x86).  
+You can download it here: https://aka.ms/vs/17/release/vc_redist.x86.exe
+
 ### Steam Deck/Linux Specific Instructions (Windows users can skip this)
 
 > [!WARNING]

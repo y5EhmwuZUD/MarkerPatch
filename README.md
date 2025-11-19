@@ -24,7 +24,7 @@ You can download it here: https://aka.ms/vs/17/release/vc_redist.x86.exe
 > To launch the game on Steam Deck or Linux, open the game's properties in Steam and include `WINEDLLOVERRIDES="dinput8=n,b" %command%` in the launch options.
 >
 > **Note**: DXVK limits the framerate to 60 FPS by default. To increase this limit, add the following to your launch options (example for 120 FPS):  
-> `DXVK_FRAME_RATE=120 WINEDLLOVERRIDES="dinput8=n,b" %command%`
+> `DXVK_CONFIG="d3d9.maxFrameRate = 120" WINEDLLOVERRIDES="dinput8=n,b" %command%`
 
 # Features
 

@@ -300,6 +300,18 @@ namespace HookHelper
 
 namespace SystemHelper
 {
+	static std::string GetModulePath()
+	{
+		HMODULE hModule = nullptr;
+
+		// Get the module handle for the DLL containing this code
+		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&GetModulePath, &hModule);
+
+		wchar_t path[FILENAME_MAX] = { 0 };
+		GetModuleFileNameW(hModule, path, FILENAME_MAX);
+		return std::filesystem::path(path).parent_path().string();
+	}
+
 	static DWORD GetCurrentDisplayFrequency()
 	{
 		DEVMODE devMode = {};
@@ -581,7 +593,7 @@ namespace SystemHelper
 
 namespace IniHelper
 {
-	mINI::INIFile iniFile("MarkerPatch.ini");
+	mINI::INIFile iniFile(SystemHelper::GetModulePath() + "\\MarkerPatch.ini");
 	mINI::INIStructure iniReader;
 
 	void Init()

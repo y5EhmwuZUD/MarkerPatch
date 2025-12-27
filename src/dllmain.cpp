@@ -704,36 +704,25 @@ static void __fastcall UpdatePlayerCamera_Hook(int thisp, float a2)
 
 static int __fastcall ApplyCameraRotation_Hook(int* thisp, int, unsigned __int64 a2, unsigned int a3, int a4)
 {
+	// Handle gyro
 	if (g_State.isControllerActive)
 	{
-		// Add gyro while aiming
 		if (g_State.isAiming && ControllerHelper::IsGyroEnabled())
 		{
-			float gyroYaw = 0.0f;
-			float gyroPitch = 0.0f;
+			float gyroYaw, gyroPitch;
 			ControllerHelper::GetProcessedGyroDelta(gyroYaw, gyroPitch);
 
 			if (gyroYaw != 0.0f || gyroPitch != 0.0f)
 			{
-				// Unpack the original angles
 				float angles[2];
 				std::memcpy(angles, &a2, sizeof(angles));
 
-				// Add gyro directly as radians
 				angles[0] += gyroPitch;
 				angles[1] += gyroYaw;
 
 				float currentPitch = *(float*)thisp;
 				float newPitch = currentPitch + angles[0];
-
-				if (newPitch > PITCH_LIMIT_NORMAL)
-				{
-					angles[0] = PITCH_LIMIT_NORMAL - currentPitch;
-				}
-				else if (newPitch < PITCH_LIMIT_AIM_DOWN)
-				{
-					angles[0] = PITCH_LIMIT_AIM_DOWN - currentPitch;
-				}
+				angles[0] = std::clamp(newPitch, PITCH_LIMIT_AIM_DOWN, PITCH_LIMIT_NORMAL) - currentPitch;
 
 				return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(angles[0], angles[1]), a3, a4);
 			}
@@ -742,85 +731,49 @@ static int __fastcall ApplyCameraRotation_Hook(int* thisp, int, unsigned __int64
 		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
 	}
 
-	// Normal camera movement
+	float horizontalDelta = 0.0f, verticalDelta = 0.0f;
+	float pitchMin = -PITCH_LIMIT_NORMAL;
+	float pitchMax = PITCH_LIMIT_NORMAL;
+
 	if (g_State.isInNormalCamera)
 	{
-		float horizontalDelta, verticalDelta;
 		ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 625.0f, horizontalDelta, verticalDelta);
-
-		if (g_State.isXInverted)
-			horizontalDelta = -horizontalDelta;
-		if (g_State.isYInverted)
-			verticalDelta = -verticalDelta;
-
-		float currentPitch = *(float*)thisp;
-		float newPitch = currentPitch + verticalDelta;
-
-		if (newPitch > PITCH_LIMIT_NORMAL)
-		{
-			verticalDelta = PITCH_LIMIT_NORMAL - currentPitch;
-		}
-		else if (newPitch < -PITCH_LIMIT_NORMAL)
-		{
-			verticalDelta = -PITCH_LIMIT_NORMAL - currentPitch;
-		}
-
-		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
 	}
-
-	// Aiming - first pass
-	if (g_State.isAiming && g_State.aimingPassCount == 2)
+	else if (g_State.isAiming)
 	{
-		float horizontalDelta, verticalDelta;
-		ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
+		pitchMin = PITCH_LIMIT_AIM_DOWN;
 
-		if (g_State.isXInverted)
-			horizontalDelta = -horizontalDelta;
-		if (g_State.isYInverted)
-			verticalDelta = -verticalDelta;
-
-		float currentPitch = *(float*)thisp;
-		float newPitch = currentPitch + verticalDelta;
-
-		if (newPitch > PITCH_LIMIT_NORMAL)
+		if (g_State.aimingPassCount == 2)
 		{
-			verticalDelta = PITCH_LIMIT_NORMAL - currentPitch;
+			ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
+			g_State.aimingPassCount--;
 		}
-		else if (newPitch < PITCH_LIMIT_AIM_DOWN)
+		else if (g_State.aimingPassCount == 1)
 		{
-			verticalDelta = PITCH_LIMIT_AIM_DOWN - currentPitch;
+			ScaleRawInput(0.0f, static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
+			horizontalDelta = 0.0f;
+			g_State.aimingPassCount--;
 		}
-
-		g_State.aimingPassCount--;
-		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
+		else
+		{
+			return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
+		}
 	}
-
-	// Aiming - second pass
-	if (g_State.isAiming && g_State.aimingPassCount == 1)
+	else
 	{
-		float horizontalDelta, verticalDelta;
-		ScaleRawInput(0.0f, static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
-
-		if (g_State.isYInverted)
-			verticalDelta = -verticalDelta;
-
-		float currentPitch = *(float*)thisp;
-		float newPitch = currentPitch + verticalDelta;
-
-		if (newPitch > PITCH_LIMIT_NORMAL)
-		{
-			verticalDelta = PITCH_LIMIT_NORMAL - currentPitch;
-		}
-		else if (newPitch < PITCH_LIMIT_AIM_DOWN)
-		{
-			verticalDelta = PITCH_LIMIT_AIM_DOWN - currentPitch;
-		}
-
-		g_State.aimingPassCount--;
-		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(verticalDelta, 0.0f), a3, a4);
+		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
 	}
 
-	return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
+	// Apply inversion
+	if (g_State.isXInverted) horizontalDelta = -horizontalDelta;
+	if (g_State.isYInverted) verticalDelta = -verticalDelta;
+
+	// Clamp pitch
+	float currentPitch = *(float*)thisp;
+	float newPitch = currentPitch + verticalDelta;
+	verticalDelta = std::clamp(newPitch, pitchMin, pitchMax) - currentPitch;
+
+	return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
 }
 
 static UINT WINAPI GetRawInputData_Hook(HRAWINPUT hRawInput, UINT uiCommand, LPVOID pData, PUINT pcbSize, UINT cbSizeHeader)

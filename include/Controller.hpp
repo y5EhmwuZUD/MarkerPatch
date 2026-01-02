@@ -869,7 +869,7 @@ namespace ControllerHelper
 
 	static void ProcessTouchpadClick()
 	{
-		if (!s_pGamepad || !s_capabilities.hasTouchpad || !TouchpadEnabled)
+		if (!s_pGamepad || !s_capabilities.hasTouchpad || !s_touchpadConfig.isEnabled)
 			return;
 
 		bool isPressed = SDL_GetGamepadButton(s_pGamepad, SDL_GAMEPAD_BUTTON_TOUCHPAD);

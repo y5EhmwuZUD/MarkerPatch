@@ -153,9 +153,9 @@ static void ReadConfig()
 	UseSDLControllerInput = IniHelper::ReadInteger("Input", "UseSDLControllerInput", 1) == 1;
 	BlockDirectInputDevices = IniHelper::ReadInteger("Input", "BlockDirectInputDevices", 1) == 1;
 	GyroEnabled = IniHelper::ReadInteger("Input", "GyroEnabled", 0) == 1;
-	GyroSensitivity = IniHelper::ReadFloat("Controller", "GyroSensitivity", 1.0f);
-	GyroSmoothing = IniHelper::ReadFloat("Controller", "GyroSmoothing", 0.016f);
-	TouchpadEnabled = IniHelper::ReadInteger("Controller", "TouchpadEnabled", 1) == 1;
+	GyroSensitivity = IniHelper::ReadFloat("Input", "GyroSensitivity", 1.0f);
+	GyroSmoothing = IniHelper::ReadFloat("Input", "GyroSmoothing", 0.016f);
+	TouchpadEnabled = IniHelper::ReadInteger("Input", "TouchpadEnabled", 1) == 1;
 
 	// Graphics
 	MaxAnisotropy = IniHelper::ReadInteger("Graphics", "MaxAnisotropy", 16);

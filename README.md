@@ -102,6 +102,20 @@ Implements proper raw mouse input to fix sensitivity issues. This works similarl
 
 The fix decouples mouse sensitivity from the game's framerate, providing consistent aiming regardless of FPS.
 
+## SDL Controller Support
+
+Adds support for PlayStation and Nintendo Switch controllers via SDL3.
+
+### Gyro Aiming
+
+Enables motion-controlled aiming using the controller's gyroscope for supported controllers (DualShock 4, DualSense, Switch Pro Controller).
+
+Enable with `GyroEnabled = 1` in `MarkerPatch.ini`.
+
+> **Note**: Gyro aiming is only active during normal gameplay and not supported in zero-gravity sections and other special sequences.
+
+> **Note**: If you experience gyro drift, place the controller on a stable surface for a few seconds to calibrate.
+
 ## Input Device Filtering
 
 Blocks all DirectInput devices except mouse and keyboard to prevent unwanted camera spinning from devices like racing wheels, flight sticks, and other peripherals. This also removes a slow XInput compatibility check that runs on every connected device during enumeration, significantly improving startup time.
@@ -210,16 +224,13 @@ Available DLC options (configurable in the `[DLC]` section of `MarkerPatch.ini`)
 
 > **Important**: This only works if the DLC items haven't already been added to the shop, as shop inventory is tied to save data. Items already in your save cannot be removed, so configuring DLC requires starting a new save file if you want different items available.
 
-## dinput8 Chaining Support
-
-Chains another `dinput8.dll` by loading `dinput8_hook.dll` for mod compatibility.
-
 ## Configuration
 
 All features can be customized via the `MarkerPatch.ini` file. Each setting includes detailed comments explaining its function and acceptable values. The patch uses sensible defaults that work for most users, but allows fine-tuning of every aspect.
 
 # Credits
 
+- [SDL3](https://www.libsdl.org/) for improved controller support.
 - [safetyhook](https://github.com/cursey/safetyhook) for hooking.  
 - [mINI](https://github.com/metayeti/mINI) for INI file handling.  
 - [CRASHARKI](https://github.com/CRASHARKI) for the logo.

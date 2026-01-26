@@ -1490,6 +1490,11 @@ static void Init()
 {
 	ReadConfig();
 
+	if (CheckLAAPatch)
+	{
+		LAAPatcher::PerformLAAPatch(GetModuleHandleA(NULL), CheckLAAPatch != 2);
+	}
+
 	// Fixes
 	ApplyHavokPhysicsFix();
 	ApplyHighCoreCPUFix();
@@ -1524,11 +1529,6 @@ static void Init()
 
 	// Misc
 	ApplyMainLoopHook();
-
-	if (CheckLAAPatch)
-	{
-		LAAPatcher::PerformLAAPatch(GetModuleHandleA(NULL), CheckLAAPatch != 2);
-	}
 }
 
 #pragma endregion

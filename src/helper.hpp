@@ -216,6 +216,8 @@ namespace MemoryHelper
 
 	DWORD ResolveRelativeAddress(uintptr_t BaseAddress, std::size_t InstructionOffset)
 	{
+		if (BaseAddress == 0) return 0;
+
 		int RelativeOffset = ReadMemory<int>(BaseAddress + InstructionOffset);
 		return BaseAddress + InstructionOffset + sizeof(RelativeOffset) + RelativeOffset;
 	}

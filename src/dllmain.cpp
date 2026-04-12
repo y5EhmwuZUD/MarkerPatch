@@ -51,6 +51,7 @@ struct GlobalState
 	// Misc
 	bool isLoadingShopItems = false;
 	float frameTime = 0;
+	bool forceCurrentItem = false;
 };
 
 // Global instance
@@ -58,7 +59,6 @@ GlobalState g_State;
 
 struct GameAddresses
 {
-	DWORD ItemCheckAddress = 0;
 	DWORD InputManagerPtr = 0;
 	DWORD NgGamePlusPtr = 0;
 	DWORD LoadedSaveMemoryPtr = 0;
@@ -215,13 +215,7 @@ static DWORD ScanModuleSignature(HMODULE Module, std::string_view Signature, con
 static float CalculateFpsConstant(int target_fps)
 {
 	// Disable limiter for unlimited FPS
-	if (target_fps <= 0) 
-	{
-		return 0.0f;
-	}
-
-	// Reasonable FPS bounds check
-	if (target_fps < 1 || target_fps > 1000) 
+	if (target_fps <= 0)
 	{
 		return 0.0f;
 	}
@@ -244,12 +238,17 @@ static inline void ScaleRawInput(float rawX, float rawY, float divisor, float& o
 	outY = (rawY * g_State.mouseSens) / divisor;
 }
 
+static inline bool MatchId(const DWORD* item, DWORD d0, DWORD d1, DWORD d2, DWORD d3)
+{
+	return item[0] == d0 && item[1] == d1 && item[2] == d2 && item[3] == d3;
+}
+
 static bool IsUALPresent()
 {
-	for (const auto& entry : std::stacktrace::current()) 
+	for (const auto& entry : std::stacktrace::current())
 	{
 		HMODULE hModule = NULL;
-		if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)entry.native_handle(), &hModule)) 
+		if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)entry.native_handle(), &hModule))
 		{
 			if (GetProcAddress(hModule, "IsUltimateASILoader") != NULL)
 				return true;
@@ -391,19 +390,14 @@ safetyhook::InlineHook InitializeItem;
 static int __fastcall InitializeItem_hook(DWORD* thisp, int, int a2)
 {
 	int result = InitializeItem.unsafe_thiscall<int>(thisp, a2);
-	DWORD itemId0 = thisp[9];
-	DWORD itemId1 = thisp[10];
-	DWORD itemId2 = thisp[11];
-	DWORD itemId3 = thisp[12];
 
 	// Hacker Suit
-	if (itemId0 == 0x58CB43ED && itemId1 == 0xEDE44FA8 && itemId2 == 0x4E4F574B && itemId3 == 0x35373230)
+	if (MatchId(thisp + 9, 0x58CB43ED, 0xEDE44FA8, 0x4E4F574B, 0x35373230))
 	{
 		thisp[151] = 0x317A1E59; // Don't use the unique id of the Elite Advanced Suit
 	}
-
 	// Zealot Suit
-	else if (itemId0 == 0x58CB5F60 && itemId1 == 0x4BF6F5A0 && itemId2 == 0x574F4843 && itemId3 == 0x39323031)
+	else if (MatchId(thisp + 9, 0x58CB5F60, 0x4BF6F5A0, 0x574F4843, 0x39323031))
 	{
 		thisp[151] = 0x4C79DD58; // Don't use the unique id of the Security Suit
 	}
@@ -684,7 +678,7 @@ static int __fastcall UpdateZeroGravityCamera_Hook(int thisp, float frametime)
 
 static int __fastcall UpdateCameraPosition_Hook(int thisp, float a2)
 {
-	if (!g_State.isControllerActive) 
+	if (!g_State.isControllerActive)
 	{
 		// Framerate independant sensitivity
 		a2 = 1.0f;
@@ -878,128 +872,153 @@ static int __cdecl InitTextureSampler_Hook(int a1, int a2)
 // ==============
 
 safetyhook::InlineHook OpenShop;
-safetyhook::InlineHook IsDlcContentOwned;
 safetyhook::InlineHook AddShopItem;
+safetyhook::InlineHook IsDlcContentOwned;
+safetyhook::InlineHook DlcRegistered;
+safetyhook::InlineHook DlcOwnershipCheck;
+safetyhook::InlineHook DlcStatusQuery;
+
+static bool IsForcedItem(const DWORD* item)
+{
+	if (EnableHackerDLC)
+	{
+		if (MatchId(item, 0x58CB43ED, 0xEDE44FA8, 0x4E4F574B, 0x35373230) || // Hacker Suit
+			MatchId(item, 0x38CB5536, 0x7AE1DC66, 0x54524542, 0x314D4152))   // Hacker Contact Beam
+			return true;
+	}
+	if (EnableSeveredDLC)
+	{
+		if (MatchId(item, 0x31CB7561, 0x1B516549, 0x534F5254, 0x30314E49) || // Patrol Suit
+			MatchId(item, 0x38CB673B, 0x11C92BBC, 0x54524542, 0x314D4152))   // Patrol Seeker Rifle
+			return true;
+	}
+	if (EnableZealotDLC)
+	{
+		if (MatchId(item, 0x58CB5F60, 0x4BF6F5A0, 0x574F4843, 0x39323031) || // Zealot Suit
+			MatchId(item, 0x38CB6733, 0xE6777830, 0x54524542, 0x314D4152))   // Zealot Force Gun
+			return true;
+	}
+	if (EnableRivetGunDLC)
+	{
+		if (MatchId(item, 0x33CB4867, 0x256213EC, 0x4E4F4F4E, 0x32304E41))   // Rivet Gun
+			return true;
+	}
+
+	return false;
+}
+
+static bool IsBlockedItem(const DWORD* item)
+{
+	if (item[2] != 0x54524542 || item[3] != 0x314D4152) // BERTRAM1
+		return false;
+
+	if (!EnableHazardPack)
+	{
+		if (MatchId(item, 0x38CB63F1, 0xDECD957E, 0x54524542, 0x314D4152) ||  // Hazard Suit
+			MatchId(item, 0x38CB673C, 0x22E2241E, 0x54524542, 0x314D4152) ||  // Hazard Line Gun
+			MatchId(item, 0x38CB63F1, 0xFA62DA20, 0x54524542, 0x314D4152) ||  // Shockpoint Suit
+			MatchId(item, 0x38CB673E, 0xD90EFC1C, 0x54524542, 0x314D4152) ||  // Shockpoint Ripper
+			MatchId(item, 0x38CB63F1, 0xED1EDDAA, 0x54524542, 0x314D4152) ||  // Triage Suit
+			MatchId(item, 0x38CB673D, 0x3B05D03C, 0x54524542, 0x314D4152))    // Triage Javelin Gun
+			return true;
+	}
+	if (!EnableMartialLawPack)
+	{
+		if (MatchId(item, 0x38CB63F2, 0x5D6D2A6A, 0x54524542, 0x314D4152) ||  // Bloody Vintage Suit
+			MatchId(item, 0x38CB674E, 0xC74BFBAC, 0x54524542, 0x314D4152) ||  // Bloody Flamethrower
+			MatchId(item, 0x38CB674F, 0xE63E8BAA, 0x54524542, 0x314D4152) ||  // Bloody Force Gun
+			MatchId(item, 0x38CB674F, 0x57B08815, 0x54524542, 0x314D4152) ||  // Bloody Javelin Gun
+			MatchId(item, 0x38CB63F2, 0x42052D6A, 0x54524542, 0x314D4152) ||  // Earthgov Security Suit
+			MatchId(item, 0x38CB674B, 0x089B5095, 0x54524542, 0x314D4152) ||  // Earthgov Detonator
+			MatchId(item, 0x38CB6749, 0x647FCDD0, 0x54524542, 0x314D4152) ||  // Earthgov Pulse Rifle
+			MatchId(item, 0x38CB6749, 0xE9D2F65F, 0x54524542, 0x314D4152))    // Earthgov Seeker Rifle
+			return true;
+	}
+	if (!EnableSupernovaPack)
+	{
+		if (MatchId(item, 0x38CB63F2, 0x2BE46F24, 0x54524542, 0x314D4152) ||  // Agility Advanced Suit
+			MatchId(item, 0x38CB6747, 0xBACF1A30, 0x54524542, 0x314D4152) ||  // Agility Plasma Cutter
+			MatchId(item, 0x38CB6744, 0x6F1A30B2, 0x54524542, 0x314D4152) ||  // Agility Rivet Gun
+			MatchId(item, 0x38CB6748, 0x95D508D2, 0x54524542, 0x314D4152) ||  // Agility Pulse Rifle
+			MatchId(item, 0x38CB63F2, 0x508D4590, 0x54524542, 0x314D4152) ||  // Forged Engineering Suit
+			MatchId(item, 0x38CB674C, 0x111C7694, 0x54524542, 0x314D4152) ||  // Forged Plasma Cutter
+			MatchId(item, 0x38CB674C, 0xC36C1B39, 0x54524542, 0x314D4152) ||  // Forged Line Gun
+			MatchId(item, 0x38CB674D, 0x5D53841E, 0x54524542, 0x314D4152) ||  // Forged Ripper
+			MatchId(item, 0x38CB63F2, 0x1C0C50E0, 0x54524542, 0x314D4152) ||  // Heavy Duty Vintage Suit
+			MatchId(item, 0x38CB6743, 0x74D94CAC, 0x54524542, 0x314D4152) ||  // Heavy Duty Contact Beam
+			MatchId(item, 0x38CB6741, 0x9463BFB4, 0x54524542, 0x314D4152) ||  // Heavy Duty Detonator
+			MatchId(item, 0x38CB673F, 0xA89B2140, 0x54524542, 0x314D4152))    // Heavy Duty Line Gun
+			return true;
+	}
+
+	return false;
+}
 
 static void __fastcall OpenShop_Hook(DWORD* thisPtr, int)
 {
 	g_State.isLoadingShopItems = true;
-	OpenShop.fastcall<void>(thisPtr);
+	OpenShop.unsafe_fastcall<void>(thisPtr);
 	g_State.isLoadingShopItems = false;
+}
+
+static bool __stdcall DlcRegistered_Hook(int a1)
+{
+	if (g_State.forceCurrentItem)
+		return true;
+
+	return DlcRegistered.unsafe_stdcall<bool>(a1);
+}
+
+static char __fastcall DlcStatusQuery_Hook(DWORD* thisPtr, int, unsigned int a2, BYTE* a3)
+{
+	if (g_State.forceCurrentItem)
+	{
+		*a3 = 1;
+		return 1;
+	}
+
+	return DlcStatusQuery.unsafe_thiscall<char>(thisPtr, a2, a3);
+}
+
+static char __stdcall DlcOwnershipCheck_Hook(int a1)
+{
+	if (g_State.forceCurrentItem)
+		return 1;
+
+	return DlcOwnershipCheck.unsafe_stdcall<char>(a1);
 }
 
 static bool __fastcall IsDlcContentOwned_Hook(int thisPtr, int, DWORD* a2)
 {
-	// Check for all DLC items
-	DWORD itemId0 = a2[0];
-	DWORD itemId1 = a2[1];
-	DWORD itemId2 = a2[2];
-	DWORD itemId3 = a2[3];
+	if (!g_State.isLoadingShopItems)
+		return IsDlcContentOwned.unsafe_thiscall<bool>(thisPtr, a2);
 
-	// Most items end with BERTRAM1 (0x54524542, 0x314D4152)
-	if (g_State.isLoadingShopItems && itemId2 == 0x54524542 && itemId3 == 0x314D4152)
-	{
-		if (!EnableHazardPack)
-		{
-			if ((itemId0 == 0x38CB63F1 && itemId1 == 0xDECD957E) ||  // Hazard Suit
-				(itemId0 == 0x38CB673C && itemId1 == 0x22E2241E) ||  // Hazard Line Gun
-				(itemId0 == 0x38CB63F1 && itemId1 == 0xFA62DA20) ||  // Shockpoint Suit
-				(itemId0 == 0x38CB673E && itemId1 == 0xD90EFC1C) ||  // Shockpoint Ripper
-				(itemId0 == 0x38CB63F1 && itemId1 == 0xED1EDDAA) ||  // Triage Suit
-				(itemId0 == 0x38CB673D && itemId1 == 0x3B05D03C))    // Triage Javelin Gun
-			{
-				return true; // Disable Hazard Pack item
-			}
-		}
-		if (!EnableMartialLawPack)
-		{
-			if ((itemId0 == 0x38CB63F2 && itemId1 == 0x5D6D2A6A) ||  // Bloody Vintage Suit
-				(itemId0 == 0x38CB674E && itemId1 == 0xC74BFBAC) ||  // Bloody Flamethrower
-				(itemId0 == 0x38CB674F && itemId1 == 0xE63E8BAA) ||  // Bloody Force Gun
-				(itemId0 == 0x38CB674F && itemId1 == 0x57B08815) ||  // Bloody Javelin Gun
-				(itemId0 == 0x38CB63F2 && itemId1 == 0x42052D6A) ||  // Earthgov Security Suit
-				(itemId0 == 0x38CB674B && itemId1 == 0x089B5095) ||  // Earthgov Detonator
-				(itemId0 == 0x38CB6749 && itemId1 == 0x647FCDD0) ||  // Earthgov Pulse Rifle
-				(itemId0 == 0x38CB6749 && itemId1 == 0xE9D2F65F))    // Earthgov Seeker Rifle
-			{
-				return true; // Disable Martial Law Pack item
-			}
-		}
-		if (!EnableSupernovaPack)
-		{
-			if ((itemId0 == 0x38CB63F2 && itemId1 == 0x2BE46F24) ||  // Agility Advanced Suit
-				(itemId0 == 0x38CB6747 && itemId1 == 0xBACF1A30) ||  // Agility Plasma Cutter
-				(itemId0 == 0x38CB6744 && itemId1 == 0x6F1A30B2) ||  // Agility Rivet Gun
-				(itemId0 == 0x38CB6748 && itemId1 == 0x95D508D2) ||  // Agility Pulse Rifle
-				(itemId0 == 0x38CB63F2 && itemId1 == 0x508D4590) ||  // Forged Engineering Suit
-				(itemId0 == 0x38CB674C && itemId1 == 0x111C7694) ||  // Forged Plasma Cutter
-				(itemId0 == 0x38CB674C && itemId1 == 0xC36C1B39) ||  // Forged Line Gun
-				(itemId0 == 0x38CB674D && itemId1 == 0x5D53841E) ||  // Forged Ripper
-				(itemId0 == 0x38CB63F2 && itemId1 == 0x1C0C50E0) ||  // Heavy Duty Vintage Suit
-				(itemId0 == 0x38CB6743 && itemId1 == 0x74D94CAC) ||  // Heavy Duty Contact Beam
-				(itemId0 == 0x38CB6741 && itemId1 == 0x9463BFB4) ||  // Heavy Duty Detonator
-				(itemId0 == 0x38CB673F && itemId1 == 0xA89B2140))    // Heavy Duty Line Gun
-			{
-				return true; // Disable Supernova Pack item
-			}
-		}
-	}
+	if (g_State.forceCurrentItem)
+		return false;
 
-	return IsDlcContentOwned.thiscall<bool>(thisPtr, a2);
+	if (IsBlockedItem(a2))
+		return true;
+
+	return IsDlcContentOwned.unsafe_thiscall<bool>(thisPtr, a2);
 }
 
 static int __fastcall AddShopItem_Hook(int thisPtr, int, DWORD* a2)
 {
-	if (g_State.isLoadingShopItems)
+	if (g_State.isLoadingShopItems && IsForcedItem(a2))
 	{
-		DWORD itemId0 = a2[0];
-		DWORD itemId1 = a2[1];
-		DWORD itemId2 = a2[2];
-		DWORD itemId3 = a2[3];
+		DWORD* shop = (DWORD*)thisPtr;
+		DWORD origLevel = shop[14];
+		DWORD origTier = shop[15];
+		shop[14] = 0x7FFFFFFF;
+		shop[15] = 0x7FFFFFFF;
 
-		bool shouldPatch = false;
+		g_State.forceCurrentItem = true;
+		int res = AddShopItem.thiscall<int>(thisPtr, a2);
+		g_State.forceCurrentItem = false;
 
-		if (EnableHackerDLC)
-		{
-			shouldPatch = (itemId0 == 0x58CB43ED && itemId1 == 0xEDE44FA8 && itemId2 == 0x4E4F574B && itemId3 == 0x35373230) || // Hacker Suit
-				(itemId0 == 0x38CB5536 && itemId1 == 0x7AE1DC66 && itemId2 == 0x54524542 && itemId3 == 0x314D4152);   // Hacker Contact Beam
-		}
-
-		if (!shouldPatch && EnableSeveredDLC)
-		{
-			shouldPatch = (itemId0 == 0x31CB7561 && itemId1 == 0x1B516549 && itemId2 == 0x534F5254 && itemId3 == 0x30314E49) || // Patrol Suit
-				(itemId0 == 0x38CB673B && itemId1 == 0x11C92BBC && itemId2 == 0x54524542 && itemId3 == 0x314D4152);   // Patrol Seeker Rifle
-		}
-
-		if (!shouldPatch && EnableZealotDLC)
-		{
-			shouldPatch = (itemId0 == 0x58CB5F60 && itemId1 == 0x4BF6F5A0 && itemId2 == 0x574F4843 && itemId3 == 0x39323031) || // Zealot Suit
-				(itemId0 == 0x38CB6733 && itemId1 == 0xE6777830 && itemId2 == 0x54524542 && itemId3 == 0x314D4152);   // Zealot Force Gun
-		}
-
-		if (!shouldPatch && EnableRivetGunDLC)
-		{
-			shouldPatch = (itemId0 == 0x33CB4867 && itemId1 == 0x256213EC && itemId2 == 0x4E4F4F4E && itemId3 == 0x32304E41); // Rivet Gun
-		}
-
-		if (shouldPatch)
-		{
-			// Backup original bytes
-			const size_t patchSize = 0x1B;
-			uint8_t originalBytes[patchSize];
-			memcpy(originalBytes, (void*)g_Addresses.ItemCheckAddress, patchSize);
-
-			// Apply NOP patch to disable ownership verification
-			MemoryHelper::MakeNOP(g_Addresses.ItemCheckAddress, patchSize);
-
-			// Call the original function
-			int res = AddShopItem.thiscall<int>(thisPtr, a2);
-
-			// Restore original bytes
-			MemoryHelper::WriteMemoryRaw(g_Addresses.ItemCheckAddress, originalBytes, patchSize);
-
-			return res;
-		}
+		shop[14] = origLevel;
+		shop[15] = origTier;
+		return res;
 	}
 
 	return AddShopItem.thiscall<int>(thisPtr, a2);
@@ -1120,11 +1139,11 @@ static void ApplyHighCoreCPUFix()
 
 	static SafetyHookMid CPUCrashFix{};
 	CPUCrashFix = safetyhook::create_mid(reinterpret_cast<void*>(CPUFix),
-		[](safetyhook::Context& ctx) 
+		[](safetyhook::Context& ctx)
 		{
 			uint32_t ebp = static_cast<uint32_t>(ctx.ebp);
 			uint32_t* cpuCount = reinterpret_cast<uint32_t*>(ebp - 0x20);
-			if (*cpuCount == 2) 
+			if (*cpuCount == 2)
 			{
 				uint32_t* currentAffinityMask = reinterpret_cast<uint32_t*>(ebp - 0x24);
 				*currentAffinityMask = 0;
@@ -1446,38 +1465,35 @@ static void ApplyTextureFiltering()
 	InitTextureSampler = HookHelper::CreateHook((void*)addr_InitTextureSampler, &InitTextureSampler_Hook);
 }
 
-static void ApplyShopOpenCheck()
+static void ApplyShopHooks()
 {
-	if ((EnableHazardPack && EnableMartialLawPack && EnableSupernovaPack) && (!EnableSeveredDLC && !EnableHackerDLC && !EnableZealotDLC && !EnableRivetGunDLC)) return;
+	bool needBlock = !EnableHazardPack || !EnableMartialLawPack || !EnableSupernovaPack;
+	bool needForce = EnableSeveredDLC || EnableHackerDLC || EnableZealotDLC || EnableRivetGunDLC;
+
+	if (!needBlock && !needForce) return;
 
 	DWORD addr_OpenShop = ScanModuleSignature(g_State.GameModule, "51 53 8B D9 83 BB F8 0A 00 00 00 89 5C 24 04 0F", "OpenShop");
-
-	if (addr_OpenShop == 0) return;
-
-	OpenShop = HookHelper::CreateHook((void*)addr_OpenShop, &OpenShop_Hook);
-}
-
-static void ApplyBlockDLCUnlock()
-{
-	if (EnableHazardPack && EnableMartialLawPack && EnableSupernovaPack) return;
-
+	DWORD addr_AddShopItem = ScanModuleSignature(g_State.GameModule, "83 EC 28 53 55 56 8B 74 24 38 8B 06 57 8B F9 85", "AddShopItem");
 	DWORD addr_IsDlcContentOwned = ScanModuleSignature(g_State.GameModule, "51 8B 41 44 53 55 33 DB 56 57 89 4C 24 10 3B C3", "IsDlcContentOwned");
 
-	if (addr_IsDlcContentOwned == 0) return;
+	if (!addr_OpenShop || !addr_AddShopItem || !addr_IsDlcContentOwned) return;
 
-	IsDlcContentOwned = HookHelper::CreateHook((void*)addr_IsDlcContentOwned, &IsDlcContentOwned_Hook);
-}
-
-static void ApplyForceDLCUnlock()
-{
-	if (!EnableSeveredDLC && !EnableHackerDLC && !EnableZealotDLC && !EnableRivetGunDLC) return;
-
-	DWORD addr_AddShopItem = ScanModuleSignature(g_State.GameModule, "83 EC 28 53 55 56 8B 74 24 38 8B 06 57 8B F9 85", "AddShopItem");
-
-	if (addr_AddShopItem == 0) return;
-
+	OpenShop = HookHelper::CreateHook((void*)addr_OpenShop, &OpenShop_Hook);
 	AddShopItem = HookHelper::CreateHook((void*)addr_AddShopItem, &AddShopItem_Hook);
-	g_Addresses.ItemCheckAddress = addr_AddShopItem + 0x175;
+	IsDlcContentOwned = HookHelper::CreateHook((void*)addr_IsDlcContentOwned, &IsDlcContentOwned_Hook);
+
+	if (needForce)
+	{
+		DWORD addr_DlcRegistered = ScanModuleSignature(g_State.GameModule, "8B 44 24 04 50 E8 ?? ?? ?? 00 33 C9 83 F8 FF", "DlcRegistered");
+		DWORD addr_DlcOwnershipCheck = ScanModuleSignature(g_State.GameModule, "53 B3 01 E8 ?? ?? ?? ?? 83 F8 04 75", "DlcOwnershipCheck");
+		DWORD addr_DlcStatusQuery = ScanModuleSignature(g_State.GameModule, "CC CC CC CC CC CC CC CC 8B 54 24 04 32 C0 3B 91 18 03 00 00", "DlcStatusQuery");
+
+		if (!addr_DlcRegistered || !addr_DlcOwnershipCheck || !addr_DlcStatusQuery) return;
+
+		DlcRegistered = HookHelper::CreateHook((void*)addr_DlcRegistered, &DlcRegistered_Hook);
+		DlcOwnershipCheck = HookHelper::CreateHook((void*)addr_DlcOwnershipCheck, &DlcOwnershipCheck_Hook);
+		DlcStatusQuery = HookHelper::CreateHook((void*)(addr_DlcStatusQuery + 0x8), &DlcStatusQuery_Hook);
+	}
 }
 
 static void ApplyMainLoopHook()
@@ -1528,9 +1544,7 @@ static void Init()
 	ApplyTextureFiltering();
 
 	// DLC
-	ApplyShopOpenCheck();
-	ApplyBlockDLCUnlock();
-	ApplyForceDLCUnlock();
+	ApplyShopHooks();
 
 	// Misc
 	ApplyMainLoopHook();

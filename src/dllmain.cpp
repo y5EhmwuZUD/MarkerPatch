@@ -36,11 +36,6 @@ struct GlobalState
 	LONG frameRawX = 0;
 	LONG frameRawY = 0;
 
-	// Camera state
-	bool isAiming = false;
-	bool isInNormalCamera = false;
-	int aimingPassCount = 0;
-
 	// Physics
 	float frameTimeScale = 0;
 	float constraintMass = 0;
@@ -595,10 +590,8 @@ safetyhook::InlineHook UpdateMenuCursor;
 safetyhook::InlineHook UpdateCameraTracking;
 safetyhook::InlineHook UpdateZeroGravityCamera;
 safetyhook::InlineHook UpdateCameraPosition;
-safetyhook::InlineHook UpdateAimingCamera;
-safetyhook::InlineHook UpdatePlayerCamera;
-safetyhook::InlineHook ApplyCameraRotation;
 safetyhook::InlineHook hkGetRawInputData;
+static int(__thiscall* OriginalApplyCameraRotation)(int*, unsigned __int64, unsigned int, int) = nullptr;
 
 static int __stdcall ApplyControlConfiguration_Hook(int a1)
 {
@@ -669,27 +662,11 @@ static int __fastcall UpdateCameraPosition_Hook(int thisp, float a2)
 	return UpdateCameraPosition.unsafe_fastcall<int>(thisp, a2);
 }
 
-static void __fastcall UpdateAimingCamera_Hook(void** thisp, int, int a2, int a3)
+static int __fastcall AimingApplyRotation_Primary(int* thisp, int, unsigned __int64 a2, unsigned int a3, int a4)
 {
-	g_State.isAiming = true;
-	g_State.aimingPassCount = 2;
-	UpdateAimingCamera.unsafe_thiscall<void>(thisp, a2, a3);
-	g_State.isAiming = false;
-}
-
-static void __fastcall UpdatePlayerCamera_Hook(int thisp, float a2)
-{
-	g_State.isInNormalCamera = true;
-	UpdatePlayerCamera.unsafe_fastcall<void>(thisp, a2);
-	g_State.isInNormalCamera = false;
-}
-
-static int __fastcall ApplyCameraRotation_Hook(int* thisp, int, unsigned __int64 a2, unsigned int a3, int a4)
-{
-	// Handle gyro
 	if (g_State.isControllerActive)
 	{
-		if (g_State.isAiming && ControllerHelper::IsGyroEnabled())
+		if (ControllerHelper::IsGyroEnabled())
 		{
 			float gyroYaw, gyroPitch;
 			ControllerHelper::GetProcessedGyroDelta(gyroYaw, gyroPitch);
@@ -698,7 +675,6 @@ static int __fastcall ApplyCameraRotation_Hook(int* thisp, int, unsigned __int64
 			{
 				float angles[2];
 				std::memcpy(angles, &a2, sizeof(angles));
-
 				angles[0] += gyroPitch;
 				angles[1] += gyroYaw;
 
@@ -706,56 +682,59 @@ static int __fastcall ApplyCameraRotation_Hook(int* thisp, int, unsigned __int64
 				float newPitch = currentPitch + angles[0];
 				angles[0] = std::clamp(newPitch, PITCH_LIMIT_AIM_DOWN, PITCH_LIMIT_NORMAL) - currentPitch;
 
-				return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(angles[0], angles[1]), a3, a4);
+				return OriginalApplyCameraRotation(thisp, PackAngles(angles[0], angles[1]), a3, a4);
 			}
 		}
 
-		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
+		return OriginalApplyCameraRotation(thisp, a2, a3, a4);
 	}
 
 	float horizontalDelta = 0.0f, verticalDelta = 0.0f;
-	float pitchMin = -PITCH_LIMIT_NORMAL;
-	float pitchMax = PITCH_LIMIT_NORMAL;
+	ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
 
-	if (g_State.isInNormalCamera)
-	{
-		ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 625.0f, horizontalDelta, verticalDelta);
-	}
-	else if (g_State.isAiming)
-	{
-		pitchMin = PITCH_LIMIT_AIM_DOWN;
-
-		if (g_State.aimingPassCount == 2)
-		{
-			ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
-			g_State.aimingPassCount--;
-		}
-		else if (g_State.aimingPassCount == 1)
-		{
-			ScaleRawInput(0.0f, static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
-			horizontalDelta = 0.0f;
-			g_State.aimingPassCount--;
-		}
-		else
-		{
-			return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
-		}
-	}
-	else
-	{
-		return ApplyCameraRotation.unsafe_thiscall<int>(thisp, a2, a3, a4);
-	}
-
-	// Apply inversion
 	if (g_State.isXInverted) horizontalDelta = -horizontalDelta;
 	if (g_State.isYInverted) verticalDelta = -verticalDelta;
 
-	// Clamp pitch
 	float currentPitch = *(float*)thisp;
 	float newPitch = currentPitch + verticalDelta;
-	verticalDelta = std::clamp(newPitch, pitchMin, pitchMax) - currentPitch;
+	verticalDelta = std::clamp(newPitch, PITCH_LIMIT_AIM_DOWN, PITCH_LIMIT_NORMAL) - currentPitch;
 
-	return ApplyCameraRotation.unsafe_thiscall<int>(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
+	return OriginalApplyCameraRotation(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
+}
+
+static int __fastcall AimingApplyRotation_Secondary(int* thisp, int, unsigned __int64 a2, unsigned int a3, int a4)
+{
+	if (g_State.isControllerActive)
+		return OriginalApplyCameraRotation(thisp, a2, a3, a4);
+
+	float horizontalDelta = 0.0f, verticalDelta = 0.0f;
+	ScaleRawInput(0.0f, static_cast<float>(g_State.frameRawY), 750.0f, horizontalDelta, verticalDelta);
+
+	if (g_State.isYInverted) verticalDelta = -verticalDelta;
+
+	float currentPitch = *(float*)thisp;
+	float newPitch = currentPitch + verticalDelta;
+	verticalDelta = std::clamp(newPitch, PITCH_LIMIT_AIM_DOWN, PITCH_LIMIT_NORMAL) - currentPitch;
+
+	return OriginalApplyCameraRotation(thisp, PackAngles(verticalDelta, 0.0f), a3, a4);
+}
+
+static int __fastcall PlayerApplyRotation(int* thisp, int, unsigned __int64 a2, unsigned int a3, int a4)
+{
+	if (g_State.isControllerActive)
+		return OriginalApplyCameraRotation(thisp, a2, a3, a4);
+
+	float horizontalDelta = 0.0f, verticalDelta = 0.0f;
+	ScaleRawInput(static_cast<float>(g_State.frameRawX), static_cast<float>(g_State.frameRawY), 625.0f, horizontalDelta, verticalDelta);
+
+	if (g_State.isXInverted) horizontalDelta = -horizontalDelta;
+	if (g_State.isYInverted) verticalDelta = -verticalDelta;
+
+	float currentPitch = *(float*)thisp;
+	float newPitch = currentPitch + verticalDelta;
+	verticalDelta = std::clamp(newPitch, -PITCH_LIMIT_NORMAL, PITCH_LIMIT_NORMAL) - currentPitch;
+
+	return OriginalApplyCameraRotation(thisp, PackAngles(verticalDelta, horizontalDelta), a3, a4);
 }
 
 static UINT WINAPI GetRawInputData_Hook(HRAWINPUT hRawInput, UINT uiCommand, LPVOID pData, PUINT pcbSize, UINT cbSizeHeader)
@@ -1380,9 +1359,11 @@ static void ApplyRawMouseInput()
 	UpdateCameraTracking = HookHelper::CreateHook((void*)addr_UpdateCameraTracking, &UpdateCameraTracking_Hook);
 	UpdateZeroGravityCamera = HookHelper::CreateHook((void*)addr_UpdateZeroGravityCamera, &UpdateZeroGravityCamera_Hook);
 	UpdateCameraPosition = HookHelper::CreateHook((void*)addr_UpdateCameraPosition, &UpdateCameraPosition_Hook);
-	UpdateAimingCamera = HookHelper::CreateHook((void*)addr_UpdateAimingCamera, &UpdateAimingCamera_Hook);
-	UpdatePlayerCamera = HookHelper::CreateHook((void*)addr_UpdatePlayerCamera, &UpdatePlayerCamera_Hook);
-	ApplyCameraRotation = HookHelper::CreateHook((void*)addr_ApplyCameraRotation, &ApplyCameraRotation_Hook);
+
+	OriginalApplyCameraRotation = reinterpret_cast<decltype(OriginalApplyCameraRotation)>(addr_ApplyCameraRotation);
+	MemoryHelper::MakeCALL(addr_UpdateAimingCamera + 0xEE, (uintptr_t)&AimingApplyRotation_Primary);
+	MemoryHelper::MakeCALL(addr_UpdateAimingCamera + 0x18F, (uintptr_t)&AimingApplyRotation_Secondary);
+	MemoryHelper::MakeCALL(addr_UpdatePlayerCamera + 0x7AE, (uintptr_t)&PlayerApplyRotation);
 	hkGetRawInputData = HookHelper::CreateHookAPI(L"user32.dll", "GetRawInputData", &GetRawInputData_Hook);
 	g_Addresses.InputManagerPtr = MemoryHelper::ReadMemory<int>(addr_UpdateMenuCursor + 0x29);
 }

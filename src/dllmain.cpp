@@ -33,8 +33,6 @@ struct GlobalState
 	// Raw input state
 	std::atomic<LONG> rawMouseDeltaX{ 0 };
 	std::atomic<LONG> rawMouseDeltaY{ 0 };
-	std::atomic<LONG> menuMouseAccumX{ 0 };
-	std::atomic<LONG> menuMouseAccumY{ 0 };
 	LONG frameRawX = 0;
 	LONG frameRawY = 0;
 
@@ -616,29 +614,13 @@ static int __stdcall ApplyControlConfiguration_Hook(int a1)
 
 static void __fastcall UpdateMenuCursor_Hook(int thisp, float a2)
 {
-	// Get raw input deltas
-	LONG rawX = g_State.menuMouseAccumX.exchange(0);
-	LONG rawY = g_State.menuMouseAccumY.exchange(0);
-
 	// Get input manager instance
 	int inputManager = *(int*)g_Addresses.InputManagerPtr;
-
-	// Calculate cursor movement delta for X and Y axes
-	float menuDeltaX = static_cast<float>(rawX) * g_State.mouseSens * 1.6f;
-	float menuDeltaY = static_cast<float>(rawY) * g_State.mouseSens * 1.6f;
-
-	// Write the calculated cursor movement deltas
-	*(float*)(inputManager + 1348) = menuDeltaX;
-	*(float*)(inputManager + 1352) = menuDeltaY;
 
 	// Check if controller is being used (18 = mouse)
 	g_State.isControllerActive = (*(int*)(inputManager + 1400) != 18);
 
 	UpdateMenuCursor.unsafe_fastcall<void>(thisp, a2);
-
-	// Clear deltas after processing
-	*(float*)(inputManager + 1348) = 0.0f;
-	*(float*)(inputManager + 1352) = 0.0f;
 }
 
 static int __fastcall UpdateCameraTracking_Hook(int thisp, float a2)
@@ -787,9 +769,6 @@ static UINT WINAPI GetRawInputData_Hook(HRAWINPUT hRawInput, UINT uiCommand, LPV
 		{
 			g_State.rawMouseDeltaX += raw->data.mouse.lLastX;
 			g_State.rawMouseDeltaY += raw->data.mouse.lLastY;
-
-			g_State.menuMouseAccumX += raw->data.mouse.lLastX;
-			g_State.menuMouseAccumY += raw->data.mouse.lLastY;
 		}
 	}
 

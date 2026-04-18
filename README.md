@@ -112,7 +112,7 @@ Enables motion-controlled aiming using the controller's gyroscope for supported 
 
 Enable with `GyroEnabled = 1` in `MarkerPatch.ini`.
 
-> **Note**: Gyro aiming is only active during normal gameplay and not supported in zero-gravity sections and other special sequences.
+> **Note**: Gyro aiming is only active during normal gameplay and not supported in zero-gravity sections.
 
 > **Note**: If you experience gyro drift, place the controller on a stable surface for a few seconds to calibrate.
 
